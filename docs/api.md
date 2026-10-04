@@ -123,11 +123,22 @@ Refresh Cookie 路径为 `/api/v1/auth`，生产环境在 HTTPS 下自动使用 
 | GET | `/statistics/issues` | 问题类型、严重度和困难片段 |
 | GET | `/statistics/goals` | 目标完成率和逾期 |
 | GET | `/statistics/instruments` | 各乐器聚合 |
-| GET | `/statistics/dashboard` | 首页聚合 |
+| GET | `/statistics/continuity` | 练习连续性：连续段、间隔、中断、恢复 |
+| GET | `/statistics/dashboard` | 首页聚合（含连续性卡片） |
 | POST | `/exports` | 创建 JSON/CSV 用户数据导出 |
 | GET | `/exports/:id` | 查询导出状态和短时下载地址 |
 
-统计接口必须传 `from`、`to` 和 IANA `timezone`。
+统计接口必须传 `from`、`to` 和 IANA `timezone`（`/statistics/continuity` 除外，参数均可省略，时区缺省取用户设置）。
+
+### 连续性口径
+
+`GET /statistics/continuity` 可选参数：`from`、`to`、`timezone`、`instrument`、`graceDays`（默认 1）、`breakAfterDays`（默认 3）。
+
+- **本地自然日**：练习归属到 `startedAt` 在完成时用户时区下的自然日；完成复盘时该日期冻结写入 `practice_sessions.local_practice_date`。
+- **时区变更不重算历史**：分析优先使用冻结日期，只有迁移前未冻结的历史数据才用请求时区兜底换算；修改时区记录 `USER_TIMEZONE_CHANGED` 审计日志。
+- **迟到数据合并不重复计数**：同一自然日多条会话按 `sessionId` 去重合并，迟到补录只并入对应日期或延长连续天数。
+- 缺失自然日数 `<= graceDays` 为 `REST` 间隔，达到 `breakAfterDays` 为 `INTERRUPTION`，之间为 `AT_RISK`；中断后再次练习在 `recoveries` 中记录。
+- 当前状态：当天练过 `ACTIVE`，宽限期 `GRACE`，随后 `AT_RISK`，达到中断阈值 `BROKEN`，无记录 `NONE`。
 
 ## 健康检查
 

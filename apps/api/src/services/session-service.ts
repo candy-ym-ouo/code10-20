@@ -9,6 +9,7 @@ import type { completionSchema, sessionListQuerySchema } from "@practice/contrac
 import { AppError, notFound } from "../lib/errors.js";
 import { prisma } from "../lib/prisma.js";
 import { enqueueCleanup } from "../lib/queue.js";
+import { dateKeyToUtcDate, localDateKey } from "../lib/local-date.js";
 
 export const sessionInclude = {
   mediaAssets: {
@@ -276,6 +277,10 @@ export async function completeSession(
       : BigInt(calculateSessionDuration(session.mediaAssets.map((item) => item.durationMs ? Number(item.durationMs) : null)));
   const now = new Date();
 
+  // 完成时冻结本地自然日：归属到练习发生（startedAt）在用户当前时区的自然日
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { timezone: true } });
+  const localPracticeDate = dateKeyToUtcDate(localDateKey(session.startedAt, user.timezone));
+
   await prisma.$transaction(async (tx) => {
     const updated = await tx.practiceSession.updateMany({
       where: { id: sessionId, userId, version: input.version, status: { in: ["DRAFT", "IN_REVIEW"] } },
@@ -283,6 +288,8 @@ export async function completeSession(
         status: "COMPLETED",
         completedAt: now,
         actualDurationMs: duration,
+        localPracticeDate,
+        practiceTimezone: user.timezone,
         version: { increment: 1 },
       },
     });

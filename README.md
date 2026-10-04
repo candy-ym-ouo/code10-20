@@ -101,6 +101,13 @@ npm run test:e2e
 - 所有资源查询都带 `userId` 条件，无法通过 ID 访问其他用户资源。
 - 删除练习进入后台清理队列，失败时保留 `DELETE_FAILED` 以便重试和审计。
 
+## 连续性分析口径
+
+- 练习归属到**本地自然日**：完成复盘时按练习发生时间（`startedAt`）在用户当时时区计算日期，冻结写入 `practice_sessions.local_practice_date`。
+- **时区变更不重算历史**：`/statistics/continuity` 优先使用冻结日期；仅迁移前未冻结的历史数据用当前时区兜底换算。修改时区只影响之后的新练习，并记录 `USER_TIMEZONE_CHANGED` 审计日志。
+- **迟到数据合并不重复计数**：同一天多条练习（含离线补录）按会话 ID 去重合并，只增加练习次数、不增加练习天数；补进历史缺口会修正连续段。
+- 缺失自然日数 `<= graceDays`（默认 1）为休息间隔，达到 `breakAfterDays`（默认 3）为中断，二者之间为风险间隔；中断后再次练习记为恢复。纯函数引擎位于 `packages/contracts`（`continuity.ts`），前后端共用。
+
 ## 项目文档
 
 - [API 契约](./docs/api.md)

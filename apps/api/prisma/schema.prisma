@@ -135,6 +135,10 @@ model PracticeSession {
   actualDurationMs BigInt             @default(0) @map("actual_duration_ms")
   status           SessionStatus      @default(DRAFT)
   completedAt      DateTime?          @map("completed_at") @db.Timestamptz(6)
+  /// 完成时按用户当时时区冻结的本地自然日（YYYY-MM-DD）。时区变更后不重算历史。
+  localPracticeDate DateTime?          @map("local_practice_date") @db.Date
+  /// 冻结本地自然日时使用的 IANA 时区，仅用于审计与排查。
+  practiceTimezone String?            @map("practice_timezone") @db.VarChar(64)
   archivedAt       DateTime?          @map("archived_at") @db.Timestamptz(6)
   version          Int                @default(0)
   createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -149,6 +153,7 @@ model PracticeSession {
   @@index([userId, status, startedAt(sort: Desc)])
   @@index([userId, instrument])
   @@index([userId, completedAt])
+  @@index([userId, localPracticeDate])
   @@map("practice_sessions")
 }
 

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export * from "./continuity.js";
+
 export const SESSION_STATUSES = [
   "DRAFT",
   "IN_REVIEW",
@@ -193,6 +195,16 @@ export const statisticsRangeSchema = z.object({
   to: z.coerce.date(),
   timezone: z.string().trim().min(1).max(64).default("Asia/Shanghai"),
   instrument: z.string().trim().max(60).optional(),
+});
+
+/** 连续性分析查询：from/to 只过滤纳入分析的练习范围，时区默认取用户设置 */
+export const continuityRangeSchema = z.object({
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+  timezone: z.string().trim().min(1).max(64).optional(),
+  instrument: z.string().trim().max(60).optional(),
+  graceDays: z.coerce.number().int().min(0).max(30).optional(),
+  breakAfterDays: z.coerce.number().int().min(1).max(365).optional(),
 });
 
 export const createExportSchema = z.object({

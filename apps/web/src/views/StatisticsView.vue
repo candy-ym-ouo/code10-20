@@ -16,6 +16,32 @@ interface Trends { data: Array<{ date: string; practiceCount: number; durationMs
 interface Issues { byType: Array<{ type: keyof typeof annotationLabels; count: number }>; bySeverity: Array<{ severity: number; count: number }>; difficultMedia: Array<{ mediaId: string; originalName: string; sessionId: string; sessionTitle: string; instrument: string; annotationCount: number; severitySum: number; score: number; reason: string }> }
 interface GoalStats { newGoals: number; completedGoals: number; dueGoals: number; overdueGoals: number; completionRate: number; denominatorExplanation: string }
 interface Instruments { data: Array<{ instrument: string; practiceCount: number; durationMs: number; annotationCount: number }> }
+type CurrentStreakStatus = "ACTIVE" | "GRACE" | "AT_RISK" | "BROKEN" | "NONE";
+interface Continuity {
+  totalPracticeDays: number;
+  totalPractices: number;
+  firstPracticeDate: string | null;
+  lastPracticeDate: string | null;
+  current: { status: CurrentStreakStatus; daysSinceLastPractice: number; streak: { lengthDays: number } | null };
+  longestStreak: { startDate: string; endDate: string; lengthDays: number } | null;
+  gaps: Array<{ kind: "REST" | "AT_RISK" | "INTERRUPTION"; status: "RECOVERED" | "OPEN"; afterDate: string; beforeDate: string | null; missingDays: number; recoveredAt: string | null }>;
+  recoveries: Array<{ resumedDate: string; interruptionDays: number; afterDate: string; followingStreakDays: number }>;
+  openGap: { kind: "REST" | "AT_RISK" | "INTERRUPTION"; missingDays: number } | null;
+  denominatorExplanation: string;
+}
+
+const continuityStatusLabels: Record<CurrentStreakStatus, string> = {
+  ACTIVE: "今天已练习",
+  GRACE: "宽限休息中",
+  AT_RISK: "有中断风险",
+  BROKEN: "连续性已中断",
+  NONE: "还没有练习记录",
+};
+const gapKindLabels: Record<"REST" | "AT_RISK" | "INTERRUPTION", string> = {
+  REST: "休息间隔",
+  AT_RISK: "风险间隔",
+  INTERRUPTION: "中断",
+};
 
 const range = ref("30");
 const customFrom = ref(new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10));
@@ -25,6 +51,7 @@ const trends = ref<Trends | null>(null);
 const issues = ref<Issues | null>(null);
 const goals = ref<GoalStats | null>(null);
 const instruments = ref<Instruments | null>(null);
+const continuity = ref<Continuity | null>(null);
 const loading = ref(true);
 const error = ref("");
 const trendEl = ref<HTMLDivElement | null>(null);
@@ -48,18 +75,23 @@ async function load(): Promise<void> {
   try {
     const { from, to } = dates();
     const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai" });
-    const [overviewResult, trendsResult, issuesResult, goalsResult, instrumentsResult] = await Promise.all([
+    const [overviewResult, trendsResult, issuesResult, goalsResult, instrumentsResult, continuityResult] = await Promise.all([
       apiFetch<Overview>(`/api/v1/statistics/overview?${params}`),
       apiFetch<Trends>(`/api/v1/statistics/trends?${params}`),
       apiFetch<Issues>(`/api/v1/statistics/issues?${params}`),
       apiFetch<GoalStats>(`/api/v1/statistics/goals?${params}`),
       apiFetch<Instruments>(`/api/v1/statistics/instruments?${params}`),
+      // 连续性按全部历史计算（连续段不能被统计区间截断），服务端用冻结的本地自然日
+      apiFetch<Continuity>(
+        `/api/v1/statistics/continuity?timezone=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai")}`,
+      ),
     ]);
     overview.value = overviewResult;
     trends.value = trendsResult;
     issues.value = issuesResult;
     goals.value = goalsResult;
     instruments.value = instrumentsResult;
+    continuity.value = continuityResult;
     await nextTick();
     renderCharts();
   } catch (reason) {
@@ -133,6 +165,29 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resize); trendChart
         <MetricCard label="目标完成率" :value="`${Math.round(goals.completionRate * 100)}%`" :hint="`${goals.completedGoals}/${goals.dueGoals}，${goals.overdueGoals} 个逾期`" />
       </div>
 
+      <article v-if="continuity" class="card continuity-card">
+        <div class="card-title">
+          <h2>练习连续性</h2>
+          <small>{{ continuity.denominatorExplanation }}</small>
+        </div>
+        <div class="grid grid-4">
+          <MetricCard label="当前状态" :value="continuityStatusLabels[continuity.current.status]" :hint="continuity.lastPracticeDate ? `上次练习 ${continuity.lastPracticeDate}，距今 ${continuity.current.daysSinceLastPractice} 天` : undefined" />
+          <MetricCard label="当前连续" :value="`${continuity.current.streak?.lengthDays ?? 0} 天`" />
+          <MetricCard label="最长连续" :value="continuity.longestStreak ? `${continuity.longestStreak.lengthDays} 天` : '—'" :hint="continuity.longestStreak ? `${continuity.longestStreak.startDate} 至 ${continuity.longestStreak.endDate}` : undefined" />
+          <MetricCard label="累计练习日" :value="`${continuity.totalPracticeDays} 天`" :hint="`共 ${continuity.totalPractices} 次练习（同日合并）`" />
+        </div>
+        <div v-if="continuity.recoveries.length || continuity.openGap" class="continuity-events">
+          <div v-if="continuity.openGap" class="continuity-event" :data-kind="continuity.openGap.kind">
+            <span class="badge">{{ gapKindLabels[continuity.openGap.kind] }}（进行中）</span>
+            <span>自 {{ continuity.lastPracticeDate }} 起已缺 {{ continuity.openGap.missingDays }} 个自然日</span>
+          </div>
+          <div v-for="(item, index) in [...continuity.recoveries].reverse().slice(0, 5)" :key="`${item.resumedDate}-${index}`" class="continuity-event" data-kind="recovered">
+            <span class="badge">恢复练习</span>
+            <span>{{ item.resumedDate }} 恢复，此前中断 {{ item.interruptionDays }} 个自然日，之后已连续 {{ item.followingStreakDays }} 天</span>
+          </div>
+        </div>
+      </article>
+
       <div class="stats-grid">
         <article class="card"><div class="card-title"><h2>练习趋势</h2></div><div ref="trendEl" class="chart" /></article>
         <article class="card"><div class="card-title"><h2>问题类型占比</h2></div><div ref="issueEl" class="chart" /></article>
@@ -175,5 +230,12 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resize); trendChart
 .chart { width: 100%; height: 310px; }
 .severity-list { display: grid; gap: 15px; }
 .severity-list > div { display: grid; grid-template-columns: 58px 1fr 40px; align-items: center; gap: 12px; }
+.continuity-card { margin-bottom: 18px; }
+.continuity-events { display: grid; gap: 10px; margin-top: 16px; }
+.continuity-event { display: flex; align-items: center; gap: 12px; font-size: 0.92rem; }
+.continuity-event .badge { padding: 2px 10px; border-radius: 999px; font-size: 0.8rem; white-space: nowrap; background: #eef2f1; color: #34504a; }
+.continuity-event[data-kind="INTERRUPTION"] .badge { background: #f7dfd8; color: #9a3b1f; }
+.continuity-event[data-kind="AT_RISK"] .badge { background: #faeeda; color: #8a5a16; }
+.continuity-event[data-kind="recovered"] .badge { background: #dcece8; color: #145c55; }
 @media (max-width: 1050px) { .stats-grid { grid-template-columns: 1fr; } }
 </style>

@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { AppError } from "../lib/errors.js";
 import { isIanaTimezone } from "../lib/validation.js";
+import { getContinuitySummary } from "./continuity-service.js";
 
 export interface StatisticsRange {
   from: Date;
@@ -211,7 +212,7 @@ export async function getDashboardSummary(userId: string, timezone: string) {
   if (!isIanaTimezone(timezone)) throw new AppError(400, "VALIDATION_ERROR", "timezone 不是有效的 IANA 时区");
   const now = new Date();
   const weekStart = new Date(now.getTime() - 7 * 86_400_000);
-  const [overview, recentSessions, openGoals, draft] = await Promise.all([
+  const [overview, recentSessions, openGoals, draft, continuity] = await Promise.all([
     getOverview(userId, { from: weekStart, to: now, timezone }),
     prisma.practiceSession.findMany({
       where: { userId, status: "COMPLETED" },
@@ -230,6 +231,7 @@ export async function getDashboardSummary(userId: string, timezone: string) {
       orderBy: { updatedAt: "desc" },
       select: { id: true, title: true, instrument: true, status: true, updatedAt: true, _count: { select: { mediaAssets: true, annotations: true } } },
     }),
+    getContinuitySummary(userId, timezone),
   ]);
-  return { weekly: overview, recentSessions, openGoals, continueSession: draft, generatedAt: new Date() };
+  return { weekly: overview, recentSessions, openGoals, continueSession: draft, continuity, generatedAt: new Date() };
 }

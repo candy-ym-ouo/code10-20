@@ -1,7 +1,8 @@
 import type { FastifyPluginAsync } from "fastify";
-import { statisticsRangeSchema } from "@practice/contracts";
+import { continuityRangeSchema, statisticsRangeSchema } from "@practice/contracts";
 import { prisma } from "../lib/prisma.js";
 import { parseOrThrow } from "../lib/validation.js";
+import { getContinuity } from "../services/continuity-service.js";
 import {
   getDashboardSummary,
   getGoalStatistics,
@@ -37,6 +38,11 @@ const statisticsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/instruments", async (request) => {
     const query = parseOrThrow(statisticsRangeSchema, request.query);
     return getInstrumentStatistics(request.authUser!.id, query);
+  });
+
+  app.get("/continuity", async (request) => {
+    const query = parseOrThrow(continuityRangeSchema, request.query);
+    return getContinuity(request.authUser!.id, query);
   });
 
   app.get("/dashboard", async (request) => {

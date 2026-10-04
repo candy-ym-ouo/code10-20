@@ -42,6 +42,12 @@ const userRoutes: FastifyPluginAsync = async (app) => {
       },
       select: selectUser,
     });
+    // 时区变更会影响之后完成练习时冻结的本地自然日；历史日期不重算，这里留痕便于排查口径
+    if (input.timezone !== undefined) {
+      await audit(request, "USER_TIMEZONE_CHANGED", "USER", user.id, "SUCCESS", {
+        timezone: input.timezone,
+      });
+    }
     return { user };
   });
 
