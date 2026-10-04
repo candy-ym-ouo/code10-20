@@ -104,6 +104,7 @@ npm run test:e2e
 ## 项目文档
 
 - [API 契约](./docs/api.md)
+- [练习连续性分析引擎](./docs/continuity.md)
 - [部署说明](./docs/deployment.md)
 - [备份与恢复](./docs/backup-restore.md)
 

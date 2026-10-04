@@ -2,6 +2,8 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { AppError } from "../lib/errors.js";
 import { isIanaTimezone } from "../lib/validation.js";
+import { localDateKey, shiftLocalDate } from "@practice/contracts";
+import { columnToLocalDate } from "./continuity-service.js";
 
 export interface StatisticsRange {
   from: Date;
@@ -211,6 +213,39 @@ export async function getDashboardSummary(userId: string, timezone: string) {
   if (!isIanaTimezone(timezone)) throw new AppError(400, "VALIDATION_ERROR", "timezone 不是有效的 IANA 时区");
   const now = new Date();
   const weekStart = new Date(now.getTime() - 7 * 86_400_000);
+  const today = localDateKey(now, timezone);
+
+  // 首页连续性：只读最近少量日汇总即可判断“今天是否练习 / 当前连续”，无需跑全历史。
+  const continuityDays = await prisma.dailyPracticeRollup.findMany({
+    where: { userId, practiceLocalDate: { lte: new Date(`${today}T00:00:00Z`) } },
+    orderBy: { practiceLocalDate: "desc" },
+    take: 400,
+  });
+  const recentDates = new Set(
+    continuityDays.map((row) => columnToLocalDate(row.practiceLocalDate)),
+  );
+  const practicedToday = recentDates.has(today);
+
+  // 严格按本地自然日回推：今天没练则从昨天起算，中间缺一天即断。
+  let currentStreakDays = 0;
+  let cursor = practicedToday ? today : shiftLocalDate(today, -1);
+  while (recentDates.has(cursor)) {
+    currentStreakDays += 1;
+    cursor = shiftLocalDate(cursor, -1);
+  }
+
+  const continuity = {
+    practicedToday,
+    currentStreakDays,
+    state: practicedToday
+      ? "PRACTICED_TODAY"
+      : currentStreakDays > 0
+        ? "AT_RISK"
+        : continuityDays.length > 0
+          ? "BROKEN"
+          : "NO_DATA",
+  };
+
   const [overview, recentSessions, openGoals, draft] = await Promise.all([
     getOverview(userId, { from: weekStart, to: now, timezone }),
     prisma.practiceSession.findMany({
@@ -231,5 +266,5 @@ export async function getDashboardSummary(userId: string, timezone: string) {
       select: { id: true, title: true, instrument: true, status: true, updatedAt: true, _count: { select: { mediaAssets: true, annotations: true } } },
     }),
   ]);
-  return { weekly: overview, recentSessions, openGoals, continueSession: draft, generatedAt: new Date() };
+  return { weekly: overview, continuity, recentSessions, openGoals, continueSession: draft, generatedAt: new Date() };
 }

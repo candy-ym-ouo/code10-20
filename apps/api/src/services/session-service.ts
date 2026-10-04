@@ -9,6 +9,11 @@ import type { completionSchema, sessionListQuerySchema } from "@practice/contrac
 import { AppError, notFound } from "../lib/errors.js";
 import { prisma } from "../lib/prisma.js";
 import { enqueueCleanup } from "../lib/queue.js";
+import {
+  columnToLocalDate,
+  freezePracticeLocalDate,
+  refreshDailyRollups,
+} from "./continuity-service.js";
 
 export const sessionInclude = {
   mediaAssets: {
@@ -163,18 +168,27 @@ export async function updateSession(
 }
 
 export async function archiveSession(userId: string, sessionId: string, restore = false) {
-  const session = await prisma.practiceSession.findFirst({ where: { id: sessionId, userId } });
+  const session = await prisma.practiceSession.findFirst({
+    where: { id: sessionId, userId },
+    select: { id: true, status: true, practiceLocalDate: true },
+  });
   if (!session) throw notFound();
   const nextStatus = restore ? "COMPLETED" : "ARCHIVED";
   if (restore && session.status !== "ARCHIVED") throw new AppError(409, "INVALID_SESSION_STATE", "只有已归档练习可以恢复");
   if (!restore && session.status !== "COMPLETED") throw new AppError(409, "INVALID_SESSION_STATE", "只有已完成练习可以归档");
-  await prisma.practiceSession.update({
-    where: { id: sessionId },
-    data: {
-      status: nextStatus,
-      archivedAt: restore ? null : new Date(),
-      version: { increment: 1 },
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.practiceSession.update({
+      where: { id: sessionId },
+      data: {
+        status: nextStatus,
+        archivedAt: restore ? null : new Date(),
+        version: { increment: 1 },
+      },
+    });
+    // 归档会把练习移出 COMPLETED，恢复会放回；重算当日汇总保持口径一致。
+    if (session.practiceLocalDate) {
+      await refreshDailyRollups(tx, userId, [columnToLocalDate(session.practiceLocalDate)]);
+    }
   });
   return getSessionForUser(userId, sessionId);
 }
@@ -275,6 +289,12 @@ export async function completeSession(
       ? session.actualDurationMs
       : BigInt(calculateSessionDuration(session.mediaAssets.map((item) => item.durationMs ? Number(item.durationMs) : null)));
   const now = new Date();
+  // 完成时刻按用户“当前”时区冻结本地自然日；此后改时区不影响该练习。
+  const user = await prisma.user.findUniqueOrThrow({
+    where: { id: userId },
+    select: { timezone: true },
+  });
+  const frozen = freezePracticeLocalDate(session.startedAt, user.timezone);
 
   await prisma.$transaction(async (tx) => {
     const updated = await tx.practiceSession.updateMany({
@@ -283,6 +303,8 @@ export async function completeSession(
         status: "COMPLETED",
         completedAt: now,
         actualDurationMs: duration,
+        practiceLocalDate: frozen.practiceLocalDate,
+        practiceLocalTimezone: frozen.practiceLocalTimezone,
         version: { increment: 1 },
       },
     });
@@ -347,6 +369,9 @@ export async function completeSession(
         data: { status: "IN_PROGRESS", version: { increment: 1 } },
       });
     }
+
+    // 整日重算：哪怕完成请求/迟到数据重放多次，也只按源表实际 COMPLETED 场次计数一次。
+    await refreshDailyRollups(tx, userId, [columnToLocalDate(frozen.practiceLocalDate)]);
   });
 
   return getSessionForUser(userId, sessionId);

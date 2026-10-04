@@ -124,10 +124,11 @@ Refresh Cookie 路径为 `/api/v1/auth`，生产环境在 HTTPS 下自动使用 
 | GET | `/statistics/goals` | 目标完成率和逾期 |
 | GET | `/statistics/instruments` | 各乐器聚合 |
 | GET | `/statistics/dashboard` | 首页聚合 |
+| GET | `/statistics/continuity` | 练习连续性：间隔、中断、恢复与连续打卡 |
 | POST | `/exports` | 创建 JSON/CSV 用户数据导出 |
 | GET | `/exports/:id` | 查询导出状态和短时下载地址 |
 
-统计接口必须传 `from`、`to` 和 IANA `timezone`。
+统计接口必须传 `from`、`to` 和 IANA `timezone`；`/statistics/continuity` 的 `from`、`to` 可省略（默认覆盖全部历史），时区只用于换算区间端点与“今天”，不会重算已冻结的历史。连续性口径见 [连续性分析引擎](./continuity.md)。
 
 ## 健康检查
 

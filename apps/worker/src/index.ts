@@ -10,6 +10,7 @@ import { prisma } from "./lib/prisma.js";
 import { deleteObject, getObjectStream, putObject } from "./lib/s3.js";
 import { generatePeaks, probeAudio } from "./lib/media.js";
 import { buildUserExport } from "./lib/export.js";
+import { refreshDailyRollupsAfterDelete } from "./lib/rollup.js";
 
 const config = getConfig();
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
@@ -88,6 +89,8 @@ async function cleanupSession(sessionId: string) {
       if (references === 0) await deleteObject(objectKey);
     }
     await prisma.practiceSession.delete({ where: { id: sessionId } });
+    // 硬删后按当日剩余 COMPLETED 练习重算汇总；删除任务重试也不会重复计数。
+    await refreshDailyRollupsAfterDelete(session.userId, [session.practiceLocalDate]);
     log("info", { sessionId }, "session cleanup completed");
   } catch (error) {
     await prisma.practiceSession.updateMany({ where: { id: sessionId }, data: { status: "DELETE_FAILED" } });

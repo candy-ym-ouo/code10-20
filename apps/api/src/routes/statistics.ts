@@ -1,7 +1,8 @@
 import type { FastifyPluginAsync } from "fastify";
-import { statisticsRangeSchema } from "@practice/contracts";
+import { continuityQuerySchema, statisticsRangeSchema } from "@practice/contracts";
 import { prisma } from "../lib/prisma.js";
 import { parseOrThrow } from "../lib/validation.js";
+import { getContinuity } from "../services/continuity-service.js";
 import {
   getDashboardSummary,
   getGoalStatistics,
@@ -42,6 +43,12 @@ const statisticsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/dashboard", async (request) => {
     const user = await prisma.user.findUniqueOrThrow({ where: { id: request.authUser!.id }, select: { timezone: true } });
     return getDashboardSummary(request.authUser!.id, user.timezone);
+  });
+
+  // 练习连续性：按本地自然日识别间隔、中断与恢复；区间可选，默认覆盖全部历史。
+  app.get("/continuity", async (request) => {
+    const query = parseOrThrow(continuityQuerySchema, request.query);
+    return getContinuity(request.authUser!.id, query);
   });
 };
 

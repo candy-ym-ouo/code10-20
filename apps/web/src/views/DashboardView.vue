@@ -19,6 +19,7 @@ interface Dashboard {
   recentSessions: Array<{ id: string; title: string; instrument: string; completedAt: string; actualDurationMs: number; _count: { annotations: number } }>;
   openGoals: Array<{ id: string; title: string; status: string; dueDate: string; sourceSession: { id: string; title: string; instrument: string } }>;
   continueSession: { id: string; title: string; instrument: string; status: string; _count: { mediaAssets: number; annotations: number } } | null;
+  continuity: { practicedToday: boolean; currentStreakDays: number; state: "PRACTICED_TODAY" | "AT_RISK" | "BROKEN" | "NO_DATA" };
 }
 
 const data = ref<Dashboard | null>(null);
@@ -51,6 +52,23 @@ onMounted(load);
     <LoadingBlock v-if="loading" />
     <div v-else-if="error" class="alert">{{ error }} <button class="button small ghost" @click="load">重试</button></div>
     <template v-else-if="data">
+      <div
+        v-if="data.continuity.state !== 'NO_DATA'"
+        class="continuity-banner"
+        :class="`state-${data.continuity.state === 'PRACTICED_TODAY' ? 'ok' : data.continuity.state === 'AT_RISK' ? 'warn' : 'bad'}`"
+      >
+        <strong>
+          <template v-if="data.continuity.practicedToday">今天已练习</template>
+          <template v-else-if="data.continuity.currentStreakDays > 0">今天还没练习</template>
+          <template v-else>连续已中断</template>
+        </strong>
+        <span v-if="data.continuity.currentStreakDays > 0">
+          当前连续 {{ data.continuity.currentStreakDays }} 天，保持节奏。
+        </span>
+        <span v-else>完成一次练习即可重新开始连续。</span>
+        <RouterLink to="/statistics">查看连续性分析</RouterLink>
+      </div>
+
       <div class="grid grid-4" style="margin-bottom: 20px">
         <MetricCard label="近 7 天练习" :value="`${data.weekly.practiceCount} 次`" />
         <MetricCard label="近 7 天总时长" :value="formatDuration(data.weekly.totalDurationMs)" />
@@ -121,4 +139,9 @@ onMounted(load);
 .goal-row { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .goal-row:last-child { border-bottom: 0; }
 .goal-row strong, .goal-row small { display: block; }
+.continuity-banner { display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-radius: 12px; margin-bottom: 20px; }
+.continuity-banner span { flex: 1; font-size: 14px; }
+.continuity-banner.state-ok { background: #e7f5ee; color: #145c3d; }
+.continuity-banner.state-warn { background: #fdf2e3; color: #9a5a12; }
+.continuity-banner.state-bad { background: #fbe9e7; color: #a33a2f; }
 </style>

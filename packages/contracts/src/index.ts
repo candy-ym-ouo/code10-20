@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export * from "./continuity.js";
+
 export const SESSION_STATUSES = [
   "DRAFT",
   "IN_REVIEW",
@@ -194,6 +196,21 @@ export const statisticsRangeSchema = z.object({
   timezone: z.string().trim().min(1).max(64).default("Asia/Shanghai"),
   instrument: z.string().trim().max(60).optional(),
 });
+
+export const continuityQuerySchema = z
+  .object({
+    // 区间可选：不传则覆盖用户全部历史；连续性天然以“冻结本地日期”为准，时区只决定“今天”。
+    from: z.coerce.date().optional(),
+    to: z.coerce.date().optional(),
+    timezone: z.string().trim().min(1).max(64).default("Asia/Shanghai"),
+    instrument: z.string().trim().max(60).optional(),
+    breakThresholdDays: z.coerce.number().int().min(1).max(365).default(2),
+    graceDays: z.coerce.number().int().min(0).max(30).default(0),
+  })
+  .refine((value) => !value.from || !value.to || value.from <= value.to, {
+    path: ["to"],
+    message: "统计开始时间不能晚于结束时间",
+  });
 
 export const createExportSchema = z.object({
   format: z.enum(["json", "csv"]).default("json"),

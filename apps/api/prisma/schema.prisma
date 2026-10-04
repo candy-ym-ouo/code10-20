@@ -100,6 +100,7 @@ model User {
   goalProgresses    GoalProgress[]
   auditLogs         AuditLog[]
   dataExports       DataExport[]
+  dailyPracticeRollups DailyPracticeRollup[]
 
   @@map("users")
 }
@@ -135,6 +136,10 @@ model PracticeSession {
   actualDurationMs BigInt             @default(0) @map("actual_duration_ms")
   status           SessionStatus      @default(DRAFT)
   completedAt      DateTime?          @map("completed_at") @db.Timestamptz(6)
+  // 连续性口径：完成时刻按当时用户时区冻结的本地自然日与时区。
+  // 之后用户改时区不会重算历史；NULL 只存在于迁移前的老数据，读取时按用户时区即时回退。
+  practiceLocalDate     DateTime?     @map("practice_local_date") @db.Date
+  practiceLocalTimezone String?       @map("practice_local_timezone") @db.VarChar(64)
   archivedAt       DateTime?          @map("archived_at") @db.Timestamptz(6)
   version          Int                @default(0)
   createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -149,8 +154,25 @@ model PracticeSession {
   @@index([userId, status, startedAt(sort: Desc)])
   @@index([userId, instrument])
   @@index([userId, completedAt])
+  @@index([userId, practiceLocalDate])
   @@map("practice_sessions")
 }
+
+/// 连续性日汇总：以“冻结本地自然日”为权威键，迟到/修正的数据通过整体重算合并，天然不重复计数。
+model DailyPracticeRollup {
+  userId          String   @map("user_id") @db.Uuid
+  practiceLocalDate DateTime @map("practice_local_date") @db.Date
+  practiceCount   Int      @map("practice_count")
+  totalDurationMs BigInt   @default(0) @map("total_duration_ms")
+  annotationCount Int      @default(0) @map("annotation_count")
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, practiceLocalDate])
+  @@index([userId, practiceLocalDate(sort: Desc)])
+  @@map("daily_practice_rollups")
+}
+
 
 model MediaAsset {
   id             String          @id @default(uuid()) @db.Uuid

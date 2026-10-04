@@ -9,6 +9,7 @@ use([BarChart, LineChart, PieChart, GridComponent, LegendComponent, TooltipCompo
 import { apiFetch, ApiError } from "../api/client.js";
 import LoadingBlock from "../components/LoadingBlock.vue";
 import MetricCard from "../components/MetricCard.vue";
+import ContinuityCard from "../components/ContinuityCard.vue";
 import { annotationLabels, formatDuration } from "../utils/format.js";
 
 interface Overview { practiceCount: number; totalDurationMs: number; annotationCount: number; averageAnnotationsPerPractice: number; newGoalCount: number; completedGoalCount: number; overdueGoalCount: number; goalCompletionRate: number }
@@ -16,6 +17,21 @@ interface Trends { data: Array<{ date: string; practiceCount: number; durationMs
 interface Issues { byType: Array<{ type: keyof typeof annotationLabels; count: number }>; bySeverity: Array<{ severity: number; count: number }>; difficultMedia: Array<{ mediaId: string; originalName: string; sessionId: string; sessionTitle: string; instrument: string; annotationCount: number; severitySum: number; score: number; reason: string }> }
 interface GoalStats { newGoals: number; completedGoals: number; dueGoals: number; overdueGoals: number; completionRate: number; denominatorExplanation: string }
 interface Instruments { data: Array<{ instrument: string; practiceCount: number; durationMs: number; annotationCount: number }> }
+interface Continuity {
+  days: Array<{ date: string; practiceCount: number; totalDurationMs: number; totalAnnotationCount: number }>;
+  currentStreak: { startDate: string; endDate: string; lengthDays: number; practiceDays: number } | null;
+  longestStreak: { startDate: string; endDate: string; lengthDays: number; practiceDays: number } | null;
+  gaps: Array<{ kind: "gap" | "break"; fromDate: string; toDate: string; missedDays: number }>;
+  breaks: Array<{ kind: "gap" | "break"; fromDate: string; toDate: string; missedDays: number }>;
+  resumptions: Array<{ date: string; previousDate: string; missedDays: number }>;
+  state: "PRACTICED_TODAY" | "AT_RISK" | "BROKEN" | "NO_DATA";
+  daysSinceLastPractice: number | null;
+  practicedToday: boolean;
+  totalPracticeDays: number;
+  totalSessions: number;
+  breakCount: number;
+  resumptionCount: number;
+}
 
 const range = ref("30");
 const customFrom = ref(new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10));
@@ -25,6 +41,7 @@ const trends = ref<Trends | null>(null);
 const issues = ref<Issues | null>(null);
 const goals = ref<GoalStats | null>(null);
 const instruments = ref<Instruments | null>(null);
+const continuity = ref<Continuity | null>(null);
 const loading = ref(true);
 const error = ref("");
 const trendEl = ref<HTMLDivElement | null>(null);
@@ -48,18 +65,20 @@ async function load(): Promise<void> {
   try {
     const { from, to } = dates();
     const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai" });
-    const [overviewResult, trendsResult, issuesResult, goalsResult, instrumentsResult] = await Promise.all([
+    const [overviewResult, trendsResult, issuesResult, goalsResult, instrumentsResult, continuityResult] = await Promise.all([
       apiFetch<Overview>(`/api/v1/statistics/overview?${params}`),
       apiFetch<Trends>(`/api/v1/statistics/trends?${params}`),
       apiFetch<Issues>(`/api/v1/statistics/issues?${params}`),
       apiFetch<GoalStats>(`/api/v1/statistics/goals?${params}`),
       apiFetch<Instruments>(`/api/v1/statistics/instruments?${params}`),
+      apiFetch<Continuity>(`/api/v1/statistics/continuity?${params}`),
     ]);
     overview.value = overviewResult;
     trends.value = trendsResult;
     issues.value = issuesResult;
     goals.value = goalsResult;
     instruments.value = instrumentsResult;
+    continuity.value = continuityResult;
     await nextTick();
     renderCharts();
   } catch (reason) {
@@ -156,6 +175,8 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resize); trendChart
           </div>
         </article>
       </div>
+
+      <ContinuityCard v-if="continuity" :continuity="continuity" />
 
       <article class="card" style="margin-top: 18px">
         <div class="card-title"><h2>最需要复习的音频片段</h2><small>分数 = 标记数 ×10 + 严重度 ×2 + 近 30 天次数 ×3</small></div>
